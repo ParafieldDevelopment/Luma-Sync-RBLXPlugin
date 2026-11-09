@@ -3,12 +3,65 @@
     <Properties>
       <string name="Name">Luma</string>
     </Properties>
-    <Item class="Script" referent="1">
+    <Item class="Folder" referent="1">
+      <Properties>
+        <string name="Name">Requesting</string>
+      </Properties>
+      <Item class="ModuleScript" referent="2">
+        <Properties>
+          <string name="Name">Request</string>
+          <string name="Source">local RequestType = require(script.Parent.RequestType)
+
+export type Request = {
+    UUID: string,
+    RequestFunctionID: string,
+    RequestType: RequestType.RequestType
+}
+
+local module = {}
+
+return module;</string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="3">
+        <Properties>
+          <string name="Name">RequestType</string>
+          <string name="Source">local RequestType = {
+    ToClient = "to_client",
+    ToServer = "to_server"
+}
+
+export type RequestType = "to_client" | "to_server"
+
+return RequestType</string>
+        </Properties>
+      </Item>
+    </Item>
+    <Item class="Script" referent="4">
       <Properties>
         <string name="Name">index</string>
         <token name="RunContext">0</token>
-        <string name="Source">local toolbar = plugin:CreateToolbar("Luma")
-local button = toolbar:CreateButton("Luma", "Luma IDE Sync", "rbxassetid://137225203329196", "Luma")</string>
+        <string name="Source">local httpService: HttpService = game:GetService("HttpService")
+local runService: RunService = game:GetService("RunService")
+local requestManager = require(script.Parent.Requesting.RequestManager) :: any
+
+local toolbar = plugin:CreateToolbar("Luma")
+local button = toolbar:CreateButton("Luma", "Luma IDE Sync", "rbxassetid://137225203329196", "Luma")
+
+if not runService:IsRunMode() then
+    if not runService:IsStudio() then
+        error("Luma Roblox Plugin cannot run outside of Roblox Studio!")
+    else
+        if not httpService.HttpEnabled then
+            error("HttpService is disabled!\n")
+        end
+
+        -- IDE Sync initialization here
+    end
+end
+
+button.Click:Connect(function()
+end)</string>
       </Properties>
     </Item>
   </Item>

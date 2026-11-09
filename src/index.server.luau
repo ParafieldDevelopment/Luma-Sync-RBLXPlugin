@@ -1,5 +1,6 @@
 local httpService: HttpService = game:GetService("HttpService")
 local runService: RunService = game:GetService("RunService")
+local requestManager = require(script.Parent.Requesting.RequestManager)
 
 local toolbar = plugin:CreateToolbar("Luma")
 local button = toolbar:CreateButton("Luma", "Luma IDE Sync", "rbxassetid://137225203329196", "Luma")
