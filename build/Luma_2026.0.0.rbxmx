@@ -1,0 +1,15 @@
+<roblox version="4">
+  <Item class="Folder" referent="0">
+    <Properties>
+      <string name="Name">Luma</string>
+    </Properties>
+    <Item class="Script" referent="1">
+      <Properties>
+        <string name="Name">index</string>
+        <token name="RunContext">0</token>
+        <string name="Source">local toolbar = plugin:CreateToolbar("Luma")
+local button = toolbar:CreateButton("Luma", "Luma IDE Sync", "rbxassetid://137225203329196", "Luma")</string>
+      </Properties>
+    </Item>
+  </Item>
+</roblox>
