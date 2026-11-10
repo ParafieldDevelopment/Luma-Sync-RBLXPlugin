@@ -10,20 +10,503 @@
       <Item class="ModuleScript" referent="2">
         <Properties>
           <string name="Name">Request</string>
-          <string name="Source">local RequestType = require(script.Parent.RequestType)
+          <string name="Source"><![CDATA[--!strict
 
-export type Request = {
-    UUID: string,
-    RequestFunctionID: string,
-    RequestType: RequestType.RequestType
+local RequestType = require(script.Parent.RequestType)
+
+local Request = {}
+Request.__index = Request
+
+export type Request<T> = {
+	UUID: string,
+	RequestFunctionID: string,
+	RequestType: RequestType.RequestType,
+
+	IsCompleted: boolean,
+	IsCancelled: boolean,
+
+	Response: T?,
+	Error: string?,
+
+	OnComplete: ((response: T) -> ())?,
+	OnCancel: (() -> ())?,
+	OnError: ((message: string) -> ())?,
+
+	_CancelHandler: (() -> ())?,
+
+	Complete: (self: Request<T>, response: T) -> (),
+	Cancel: (self: Request<T>) -> (),
+	Fail: (self: Request<T>, message: string) -> (),
+
+	SetCallback: (self: Request<T>, callback: (response: T) -> ()) -> (),
+	SetCancelCallback: (self: Request<T>, callback: () -> ()) -> (),
+	SetErrorCallback: (self: Request<T>, callback: (message: string) -> ()) -> (),
+
+	SetCancelHandler: (self: Request<T>, callback: () -> ()) -> (),
 }
 
-local module = {}
+function Request.New<T>(
+	uuid: string,
+	functionID: string,
+	requestType: RequestType.RequestType
+): Request<T>
+	local self: Request<T> = setmetatable({}, Request) :: any
 
-return module;</string>
+	self.UUID = uuid
+	self.RequestFunctionID = functionID
+	self.RequestType = requestType
+
+	self.IsCompleted = false
+	self.IsCancelled = false
+
+	self.Response = nil
+	self.Error = nil
+
+	self.OnComplete = nil
+	self.OnCancel = nil
+	self.OnError = nil
+
+	self._CancelHandler = nil
+
+	return self
+end
+
+function Request.Complete<T>(self: Request<T>, response: T)
+	if self.IsCompleted or self.IsCancelled then
+		return
+	end
+
+	self.Response = response
+	self.IsCompleted = true
+
+	if self.OnComplete then
+		self.OnComplete(response)
+	end
+end
+
+function Request.Cancel<T>(self: Request<T>)
+	if self.IsCompleted or self.IsCancelled then
+		return
+	end
+
+	self.IsCancelled = true
+
+	if self._CancelHandler then
+		self._CancelHandler()
+	end
+
+	if self.OnCancel then
+		self.OnCancel()
+	end
+end
+
+function Request.Fail<T>(self: Request<T>, message: string)
+	if self.IsCompleted or self.IsCancelled then
+		return
+	end
+
+	self.Error = message
+	self.IsCompleted = true
+
+	if self.OnError then
+		self.OnError(message)
+	end
+end
+
+function Request.SetCallback<T>(
+	self: Request<T>,
+	callback: (response: T) -> ()
+)
+	self.OnComplete = callback
+
+	if self.IsCompleted and self.Error == nil then
+		callback(self.Response :: T)
+	end
+end
+
+function Request.SetCancelCallback<T>(
+	self: Request<T>,
+	callback: () -> ()
+)
+	self.OnCancel = callback
+
+	if self.IsCancelled then
+		callback()
+	end
+end
+
+function Request.SetErrorCallback<T>(
+	self: Request<T>,
+	callback: (message: string) -> ()
+)
+	self.OnError = callback
+
+	if self.IsCompleted and self.Error ~= nil then
+		callback(self.Error)
+	end
+end
+
+function Request.SetCancelHandler<T>(
+	self: Request<T>,
+	callback: () -> ()
+)
+	self._CancelHandler = callback
+
+	if self.IsCancelled then
+		callback()
+	end
+end
+
+return Request
+]]></string>
         </Properties>
       </Item>
       <Item class="ModuleScript" referent="3">
+        <Properties>
+          <string name="Name">RequestManager</string>
+          <string name="Source"><![CDATA[--!strict
+
+local HttpService = game:GetService("HttpService")
+
+local Request = require(script.Parent.Request)
+local RequestType = require(script.Parent.RequestType)
+
+export type RequestMap = {
+	[string]: Request.Request<any>,
+}
+
+export type RequestContext = {
+	IsCancelled: boolean,
+}
+
+type RequestHandler = (payload: any, context: RequestContext) -> any
+
+type IncomingMessage = {
+	kind: string,
+	uuid: string?,
+	functionID: string?,
+	requestType: RequestType.RequestType?,
+	payload: any?,
+	success: boolean?,
+	error: string?,
+}
+
+type OutgoingRequestMessage = {
+	kind: "request",
+	uuid: string,
+	functionID: string,
+	requestType: RequestType.RequestType,
+	payload: any,
+}
+
+type OutgoingResponseMessage = {
+	kind: "response",
+	uuid: string,
+	success: boolean,
+	payload: any?,
+	error: string?,
+}
+
+type OutgoingCancelMessage = {
+	kind: "cancel",
+	uuid: string,
+}
+
+type OutgoingMessage = OutgoingRequestMessage | OutgoingResponseMessage | OutgoingCancelMessage
+
+export type RequestManager = {
+	URL: string,
+	Websocket: WebStreamClient,
+	IsConnected: boolean,
+
+	Requests: RequestMap,
+	Handlers: { [string]: RequestHandler },
+	Incoming: { [string]: RequestContext },
+
+	Send: <T>(
+		self: RequestManager,
+		functionID: string,
+		requestType: RequestType.RequestType,
+		payload: any
+	) -> Request.Request<T>,
+
+	RegisterHandler: (self: RequestManager, functionID: string, handler: RequestHandler) -> (),
+	_SendMessage: (self: RequestManager, message: OutgoingMessage) -> boolean,
+	_HandleResponse: (self: RequestManager, message: IncomingMessage) -> (),
+	_HandleRequest: (self: RequestManager, message: IncomingMessage) -> (),
+	_HandleCancel: (self: RequestManager, message: IncomingMessage) -> (),
+	_HandleMessage: (self: RequestManager, rawMessage: string) -> (),
+
+	Close: (self: RequestManager) -> (),
+}
+
+local RequestManager = {}
+RequestManager.__index = RequestManager
+
+function RequestManager._SendMessage(self: RequestManager, message: OutgoingMessage): boolean
+	if not self.IsConnected then
+		return false
+	end
+
+	local success: boolean, result: any = pcall(function()
+		self.Websocket:Send(HttpService:JSONEncode(message))
+	end)
+
+	if not success then
+		warn("[Luma IDE Sync] Failed to send message:", result)
+		return false
+	end
+
+	return true
+end
+
+function RequestManager.Send<T>(
+	self: RequestManager,
+	functionID: string,
+	requestType: RequestType.RequestType,
+	payload: any
+): Request.Request<T>
+	assert(self.IsConnected, "WebSocket is not connected")
+
+	local uuid: string = HttpService:GenerateGUID(false)
+
+	local request: Request.Request<T> = Request.New(
+		uuid,
+		functionID,
+		requestType
+	) :: any
+
+	self.Requests[uuid] = request :: Request.Request<any>
+
+	request:SetCancelHandler(function()
+		self.Requests[uuid] = nil
+
+		self:_SendMessage({
+			kind = "cancel",
+			uuid = uuid,
+		})
+	end)
+
+	local success: boolean = self:_SendMessage({
+		kind = "request",
+		uuid = uuid,
+		functionID = functionID,
+		requestType = requestType,
+		payload = payload,
+	})
+
+	if not success then
+		self.Requests[uuid] = nil
+		request:Fail("Failed to send request")
+	end
+
+	return request
+end
+
+function RequestManager.RegisterHandler(
+	self: RequestManager,
+	functionID: string,
+	handler: RequestHandler
+)
+	self.Handlers[functionID] = handler
+end
+
+function RequestManager._HandleResponse(self: RequestManager, message: IncomingMessage)
+	if type(message.uuid) ~= "string" then
+		return
+	end
+
+	local request: Request.Request<any>? = self.Requests[message.uuid]
+
+	if not request then
+		return
+	end
+
+	self.Requests[message.uuid] = nil
+
+	if message.success then
+		request:Complete(message.payload)
+	else
+		request:Fail(message.error or "Remote request failed")
+	end
+end
+
+function RequestManager._HandleRequest(self: RequestManager, message: IncomingMessage)
+	if type(message.uuid) ~= "string" then
+		return
+	end
+
+	if type(message.functionID) ~= "string" then
+		return
+	end
+
+	local handler: RequestHandler? = self.Handlers[message.functionID]
+
+	if not handler then
+		self:_SendMessage({
+			kind = "response",
+			uuid = message.uuid,
+			success = false,
+			error = "Unknown function: " .. message.functionID,
+		})
+
+		return
+	end
+
+	local context: RequestContext = {
+		IsCancelled = false,
+	}
+
+	self.Incoming[message.uuid] = context
+
+	task.spawn(function()
+		local success: boolean, result: any = pcall(
+			handler,
+			message.payload,
+			context
+		)
+
+		-- The request may have been cancelled while the handler ran.
+		if self.Incoming[message.uuid] ~= context then
+			return
+		end
+
+		self.Incoming[message.uuid] = nil
+
+		if context.IsCancelled then
+			return
+		end
+
+		if success then
+			self:_SendMessage({
+				kind = "response",
+				uuid = message.uuid,
+				success = true,
+				payload = result,
+			})
+		else
+			self:_SendMessage({
+				kind = "response",
+				uuid = message.uuid,
+				success = false,
+				error = tostring(result),
+			})
+		end
+	end)
+end
+
+function RequestManager._HandleCancel(self: RequestManager, message: IncomingMessage)
+	if type(message.uuid) ~= "string" then
+		return
+	end
+
+	local context: RequestContext? = self.Incoming[message.uuid]
+
+	if context then
+		context.IsCancelled = true
+		self.Incoming[message.uuid] = nil
+	end
+end
+
+function RequestManager._HandleMessage(self: RequestManager, rawMessage: string)
+	local success: boolean, decoded: any = pcall(function()
+		return HttpService:JSONDecode(rawMessage)
+	end)
+
+	if not success or type(decoded) ~= "table" then
+		warn("[Luma IDE Sync] Received invalid JSON message")
+		return
+	end
+
+	local message: IncomingMessage = decoded :: IncomingMessage
+
+	if type(message.kind) ~= "string" then
+		warn("[Luma IDE Sync] Received message without a kind")
+		return
+	end
+
+	if message.kind == "response" then
+		self:_HandleResponse(message)
+
+	elseif message.kind == "request" then
+		self:_HandleRequest(message)
+
+	elseif message.kind == "cancel" then
+		self:_HandleCancel(message)
+
+	else
+		warn("[Luma IDE Sync] Unknown message kind:", message.kind)
+	end
+end
+
+function RequestManager.new(url: string): RequestManager
+	local self: RequestManager = setmetatable({
+		URL = url,
+		IsConnected = false,
+
+		Requests = {},
+		Handlers = {},
+		Incoming = {},
+
+		Websocket = HttpService:CreateWebStreamClient(
+			Enum.WebStreamClientType.WebSocket,
+			{
+				Url = url,
+			}
+		),
+	}, RequestManager) :: any
+
+	self.Websocket.Opened:Connect(function(statusCode: number, headers: string)
+		self.IsConnected = true
+
+		print("[Luma IDE Sync] Connected:", statusCode)
+	end)
+
+	self.Websocket.MessageReceived:Connect(function(message: string)
+		self:_HandleMessage(message)
+	end)
+
+	self.Websocket.Error:Connect(function(statusCode: number, message: string)
+		self.IsConnected = false
+
+		warn(
+			"[Luma IDE Sync] WebSocket error:",
+			statusCode,
+			message
+		)
+	end)
+
+	self.Websocket.Closed:Connect(function()
+		self.IsConnected = false
+
+		-- Fail all outstanding requests when disconnected.
+		for uuid: string, request: Request.Request<any> in self.Requests do
+			self.Requests[uuid] = nil
+			request:Fail("WebSocket connection closed")
+		end
+
+		for uuid: string, context: RequestContext in self.Incoming do
+			context.IsCancelled = true
+			self.Incoming[uuid] = nil
+		end
+
+		print("[Luma IDE Sync] Disconnected")
+	end)
+
+	return self
+end
+
+function RequestManager.Close(self: RequestManager)
+	if self.IsConnected then
+		self.Websocket:Close()
+	end
+end
+
+return RequestManager
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="4">
         <Properties>
           <string name="Name">RequestType</string>
           <string name="Source">local RequestType = {
@@ -37,16 +520,20 @@ return RequestType</string>
         </Properties>
       </Item>
     </Item>
-    <Item class="Script" referent="4">
+    <Item class="Script" referent="5">
       <Properties>
         <string name="Name">index</string>
         <token name="RunContext">0</token>
         <string name="Source">local httpService: HttpService = game:GetService("HttpService")
 local runService: RunService = game:GetService("RunService")
-local requestManager = require(script.Parent.Requesting.RequestManager) :: any
+local RequestManager = require(script.Parent.Requesting.RequestManager)
+local _requestManager = require(script.Parent.Requesting.RequestManager)
 
 local toolbar = plugin:CreateToolbar("Luma")
-local button = toolbar:CreateButton("Luma", "Luma IDE Sync", "rbxassetid://137225203329196", "Luma")
+local button = toolbar:CreateButton("Luma", "Open the connection UI\n\nDisabled", "rbxassetid://137225203329196", "Luma IDE Sync")
+button.Enabled = false
+
+local manager: RequestManager.RequestManager? = nil
 
 if not runService:IsRunMode() then
     if not runService:IsStudio() then
@@ -56,11 +543,29 @@ if not runService:IsRunMode() then
             error("HttpService is disabled!\n")
         end
 
-        -- IDE Sync initialization here
+        button.Tooltip = "Open the connection UI\n\nDisconnected"
     end
 end
 
 button.Click:Connect(function()
+    -- IDE Sync initialization here
+
+    button.Tooltip = "Open the connection UI\n\nConnecting..."
+
+    manager = _requestManager.new("ws://localhost:3343")
+    if manager and manager.Websocket then
+        manager.Websocket.Opened:Connect(function()
+            button.Tooltip = "Open the connection UI\n\nConnected"
+        end)
+
+        manager.Websocket.Error:Connect(function()
+            button.Tooltip = "Open the connection UI\n\nDisconnected"
+        end)
+
+        manager.Websocket.Closed:Connect(function()
+            button.Tooltip = "Open the connection UI\n\nDisconnected"
+        end)
+    end
 end)</string>
       </Properties>
     </Item>
