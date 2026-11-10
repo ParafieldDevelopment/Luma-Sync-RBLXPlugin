@@ -1,11 +1,17 @@
-> [!IMPORTANT]
->
-> This project is discontinued in favor of the Luma IDE project 
->
-> We would not recommend continuing this project and keeping it here for archival purposes
->
-> View the new IDE at https://github.com/ParafieldDevelopment/LumaIDE
+# Luma IDE Sync ( Roblox Studio Plugin )
 
-# MoonLight-Plugin
+Brings the ability to sync the IDE and roblox. 
 
-Connection to roblox studio
+# Developing
+
+To develop this plugin you will need the Rokit and Rojo toolchains along with Visual Studio Code with the Luau Language Server.
+
+```sh
+rokit install
+```
+
+and to sync the sourcemap to the IDE use
+
+```sh
+rojo sourcemap --watch default.project.json --output sourcemap.json
+```
