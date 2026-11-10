@@ -15,3 +15,8 @@ and to sync the sourcemap to the IDE use
 ```sh
 rojo sourcemap --watch default.project.json --output sourcemap.json
 ```
+
+to compile to roblox plugin use
+```sh
+python build.py
+```
