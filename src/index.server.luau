@@ -84,20 +84,14 @@ local function initialize()
         return
     end
 
-    if not HttpService.HttpEnabled then
-        warn("[Luma] Plugin cannot start! Please enable HttpService!")
-        button.Enabled = false
-        return
-    end
-
     local widgetInfo = DockWidgetPluginGuiInfo.new(
         Enum.InitialDockState.Float,
         false,
         false,
-        600,
-        400,
-        600,
-        400
+        1000,
+        800,
+        1000,
+        800
     )
 
     widget = plugin:CreateDockWidgetPluginGuiAsync(
@@ -114,7 +108,7 @@ local function initialize()
     button.Enabled = true
     setStatus("Disconnected", Color3.fromRGB(255, 0, 0))
 
-    local textbox: TextBox = widgetFrame.URLOverride
+    local textbox: TextBox = widgetFrame.URLOverride.TextBox
     local url = (plugin:GetSetting("URL") or "ws://localhost:3343") :: string
 
     textbox.Text = url
